@@ -1,4 +1,4 @@
-package github.beefmediumrare.telemetryadapter.client
+package github.beefmediumrare.telemetryadapter.model
 
 import java.time.Instant
 

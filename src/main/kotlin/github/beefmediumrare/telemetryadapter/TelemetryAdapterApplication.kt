@@ -1,13 +1,13 @@
- package github.beefmediumrare.telemetryadapter
+package github.beefmediumrare.telemetryadapter
 
-import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.boot.runApplication
-import org.springframework.core.env.Environment
+import org.springframework.cloud.openfeign.EnableFeignClients
 import org.springframework.scheduling.annotation.EnableScheduling
 
 @SpringBootApplication
 @EnableScheduling
+@EnableFeignClients
 class TelemetryAdapterApplication
 
 fun main(args: Array<String>) {

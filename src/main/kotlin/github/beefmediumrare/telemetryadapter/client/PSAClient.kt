@@ -1,159 +1,108 @@
 package github.beefmediumrare.telemetryadapter.client
 
 import com.fasterxml.jackson.annotation.JsonProperty
-import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Value
-import org.springframework.stereotype.Component
-import org.springframework.web.reactive.function.client.WebClient
-import java.time.Duration
+import feign.Headers
+import feign.Param
+import feign.RequestLine
 import java.time.Instant
 
-@Component
-class PSAClient(
-    @Value("\${psa.clientId}")
-    private val clientId: String,
-    @Value("\${psa.user.vin}")
-    private val vehicleID: String,
+interface PSAClient {
+    @RequestLine("GET /vehicles?client_id={clientId}")
+    @Headers(
+        "Authorization: Bearer {authToken}",
+        "x-introspect-realm: clientsB2CPeugeot",
+        "Accept: application/hal+json",
+    )
+    fun getVehicles(
+        @Param("clientId")
+        clientId: String,
+        @Param("authToken")
+        authToken: String,
+    ): GetVehiclesResponse
 
-    private val authClient: PSAAuthClient,
-) {
-    private val logger = LoggerFactory.getLogger(javaClass)
-    private val apiClient = WebClient.builder()
-        .baseUrl("https://api.groupe-psa.com/connectedcar/v4/user")
-        .defaultHeaders {
-            it.set("x-introspect-realm", "clientsB2CPeugeot")
-            it.set("Accept", "application/hal+json")
-        }
+    @RequestLine("GET /vehicles/{vehicleId}/status?client_id={clientId}&extension=kinetic")
+    @Headers(
+        "Authorization: Bearer {authToken}",
+        "x-introspect-realm: clientsB2CPeugeot",
+        "Accept: application/hal+json",
+    )
+    fun getVehicleStatus(
+        @Param("vehicleId")
+        vehicleId: String,
+        @Param("clientId")
+        clientId: String,
+        @Param("authToken")
+        authToken: String,
+    ): GetVehicleStatusResponse
 
-        .build()
+    data class GetVehiclesResponse(
+        @JsonProperty("_embedded")
+        val embedded: EmbeddedData,
+    ) {
 
-    private lateinit var vehicleId: String
-
-    init {
-        vehicleId = getVehicleId()
-    }
-
-    private fun getVehicleId(): String {
-        logger.info("getVehicleId called")
-        data class Vehicle(
-            val id: String,
-            val vin: String,
-        )
-
-        data class Embedded(
+        data class EmbeddedData(
+            @JsonProperty("vehicles")
             val vehicles: List<Vehicle>,
-        )
+        ) {
 
-        data class Response(
-            @JsonProperty("_embedded")
-            val embedded: Embedded
-        )
-
-        logger.info("getting…")
-        val responseBody = authClient.withAuthentication { authToken ->
-            apiClient
-                .get()
-                .uri {
-                    it.path("/vehicles")
-                        .queryParam("client_id", clientId)
-                        .build()
-                }
-                .headers {
-                    it.setBearerAuth(authToken)
-                }
-                .retrieve()
-                .toEntity(Response::class.java)
-                .timeout(Duration.ofSeconds(30))
-                .block()
-                .let {
-                    checkNotNull(it?.body) { "Unexpected empty response" }
-                }
+            data class Vehicle(
+                @JsonProperty("id")
+                val id: String,
+                @JsonProperty("vin")
+                val vin: String,
+            )
         }
-        logger.info("Got response $responseBody")
-
-        return responseBody.embedded.vehicles.single{ it.vin == vehicleID }.id
     }
 
-    fun getTelemetryData(): TelemetryData {
-        logger.info("getTelemetryData called")
-        data class Charging(
-            // "No" "Slow" "Quick"
-            val chargingMode: String,
-            // [0…500] km/h
-            val chargingRate: Int,
-        )
-
+    data class GetVehicleStatusResponse(
+        @JsonProperty("energy")
+        val energy: List<Energy>,
+        @JsonProperty("kinetic")
+        val kinetic: Kinetic,
+        @JsonProperty("environment")
+        val environment: Environment,
+    ) {
         data class Energy(
             // "Fuel" "Electric"
+            @JsonProperty("type")
             val type: String,
             // [0…100]
+            @JsonProperty("level")
             val level: Double,
             // Vehicle autonomy for this energy class expressed in KM
+            @JsonProperty("autonomy")
             val autonomy: Double?,
+            @JsonProperty("charging")
             val charging: Charging?,
+            @JsonProperty("createdAt")
             val createdAt: Instant,
-        )
+        ) {
+            data class Charging(
+                // "No" "Slow" "Quick"
+                @JsonProperty("chargingMode")
+                val chargingMode: String,
+                // [0…500] km/h
+                @JsonProperty("chargingRate")
+                val chargingRate: Int,
+            )
+        }
 
         data class Kinetic(
+            @JsonProperty("moving")
             val moving: Boolean,
+            @JsonProperty("speed")
             val speed: Double?,
+            @JsonProperty("acceleration")
             val acceleration: Double?,
         )
 
-        data class Air(
-            @JsonProperty("temp")
-            val temperature: Double?,
-        )
-
         data class Environment(
+            @JsonProperty("air")
             val air: Air,
-        )
-
-        data class Response(
-            val energy: List<Energy>,
-            val kinetic: Kinetic,
-            val environment: Environment,
-        )
-
-        logger.info("getting…")
-        val responseBody = authClient.withAuthentication { authToken ->
-            apiClient
-                .get()
-                .uri {
-                    it.path("/vehicles/{vehicle_id}/status")
-                        .queryParam("client_id", clientId)
-                        .queryParam("extension", "kinetic")
-                        .build(vehicleId)
-                }
-                .headers {
-                    it.setBearerAuth(authToken)
-                }
-                .retrieve()
-                .toEntity(Response::class.java)
-                .onErrorComplete()
-                .block()
-                .let {
-                    checkNotNull(it?.body) { "Unexpected empty response" }
-                }
-        }
-        logger.info("Got response $responseBody")
-
-        return with(responseBody) {
-            val energy = energy.single { it.type == "Electric" }
-
-            TelemetryData(
-                createdAt = energy.createdAt,
-                stateOfCharge = energy.level,
-                chargingMode = when (energy.charging!!.chargingMode) {
-                    "No" -> null
-                    "Slow" -> TelemetryData.ChargingMode.AC
-                    "Quick" -> TelemetryData.ChargingMode.DC
-                    else -> throw IllegalArgumentException("Unknown chargingMode '${energy.charging.chargingMode}'")
-                },
-                parked = !kinetic.moving,
-                externalTemperature = environment.air.temperature,
-                estimatedRange = energy.autonomy,
-                speed = kinetic.speed,
+        ) {
+            data class Air(
+                @JsonProperty("temp")
+                val temperature: Double?,
             )
         }
     }
