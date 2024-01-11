@@ -1,5 +1,5 @@
 ```shell
-gradle jibBuildTar -Djib.to.image=telemetry-adapter:latest -Djib.outputPaths.tar=build/telemetry-adapter.tar 
+./gradlew jibBuildTar -Djib.to.image=telemetry-adapter:latest -Djib.outputPaths.tar=build/telemetry-adapter.tar 
 ```
 
 ```shell
